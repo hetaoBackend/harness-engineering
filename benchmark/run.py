@@ -10,6 +10,10 @@ Ablation mode — auto-run all middleware combinations, print comparison matrix:
     uv run benchmark/run.py --provider deepseek --ablation
     uv run benchmark/run.py --provider anthropic --ablation --tasks prime_with_tests lru_cache
 
+Local tracing (no LangSmith needed):
+    uv run benchmark/run.py --provider deepseek --trace
+    uv run benchmark/run.py --provider deepseek --trace --trace-dir my_traces
+
 Other options:
     uv run benchmark/run.py --list               # show task IDs
     uv run benchmark/run.py --out results.json   # save to JSON
@@ -92,13 +96,21 @@ async def run_task(
     cfg,                      # ProviderConfig
     mw_flags: dict,
     timeout_s: int,
+    run_id: str = "",
+    traces_dir: Path | None = None,
 ) -> TaskResult:
     from harness.agent import create_harness_agent
 
     agent = create_harness_agent(provider_config=cfg, cwd=str(sandbox), **mw_flags)
 
     from langchain_core.runnables import RunnableConfig
-    config: RunnableConfig = {"configurable": {"thread_id": f"bench-{task.id}-{time.monotonic_ns()}"}}
+    lc_config: RunnableConfig = {"configurable": {"thread_id": f"bench-{task.id}-{time.monotonic_ns()}"}}
+
+    tracer = None
+    if traces_dir is not None and run_id:
+        from harness.tracer import LocalTracer
+        tracer = LocalTracer(task_id=task.id, run_id=run_id, traces_dir=traces_dir)
+        lc_config["callbacks"] = [tracer]
 
     t0 = time.monotonic()
     error = ""
@@ -106,7 +118,7 @@ async def run_task(
         await asyncio.wait_for(
             agent.ainvoke(
                 {"messages": [{"role": "user", "content": task.description}]},
-                config=config,
+                config=lc_config,
             ),
             timeout=timeout_s,
         )
@@ -117,9 +129,17 @@ async def run_task(
     elapsed = time.monotonic() - t0
 
     if error:
+        if tracer:
+            tracer.set_verdict(passed=False, reason="", error=error)
+            tracer.save()
         return TaskResult(task.id, passed=False, reason="", error=error, elapsed_s=elapsed)
 
     passed, reason = task.verify(sandbox)
+    if tracer:
+        tracer.set_verdict(passed=passed, reason=reason)
+        trace_path = tracer.save()
+        # Print trace path quietly so user knows where to look
+        print(f" [trace → {trace_path}]", end="")
     return TaskResult(task.id, passed=passed, reason=reason, elapsed_s=elapsed)
 
 
@@ -129,6 +149,8 @@ async def run_config(
     cfg,
     mw_flags: dict,
     timeout_s: int,
+    run_id: str = "",
+    traces_dir: Path | None = None,
     verbose: bool = True,
 ) -> RunResult:
     run = RunResult(label=label, provider=cfg.name, model=cfg.model, flags=mw_flags)
@@ -140,7 +162,11 @@ async def run_config(
         with tempfile.TemporaryDirectory(prefix=f"bench_{task.id}_") as tmp:
             sandbox = Path(tmp)
             task.setup(sandbox)
-            result = await run_task(task, sandbox, cfg, mw_flags, timeout_s)
+            result = await run_task(
+                task, sandbox, cfg, mw_flags, timeout_s,
+                run_id=f"{run_id}_{label}" if run_id else "",
+                traces_dir=traces_dir,
+            )
         run.results.append(result)
         if verbose:
             status = "PASS" if result.passed else ("ERR" if result.error else "FAIL")
@@ -240,12 +266,17 @@ async def main(args: argparse.Namespace) -> None:
     cfg.check_api_key()
 
     all_runs: list[RunResult] = []
+    traces_dir = Path(args.trace_dir) if args.trace else None
+    run_id = f"{cfg.name}_{int(time.time())}" if traces_dir else ""
+    if traces_dir:
+        print(f"  Tracing → {traces_dir}/{run_id}/")
 
     if args.ablation:
         print(f"\nAblation run: {len(ABLATION_CONFIGS)} configs × {len(tasks)} tasks"
               f"  |  provider={cfg.name}  model={cfg.model}")
         for label, mw_flags in ABLATION_CONFIGS:
-            run = await run_config(tasks, label, cfg, mw_flags, args.timeout)
+            run = await run_config(tasks, label, cfg, mw_flags, args.timeout,
+                                   run_id=run_id, traces_dir=traces_dir)
             all_runs.append(run)
         print_ablation_matrix(all_runs, tasks)
     else:
@@ -258,7 +289,8 @@ async def main(args: argparse.Namespace) -> None:
         label = "no_harness" if args.no_harness else "full_harness"
         print(f"\nBenchmark: {len(tasks)} tasks  |  provider={cfg.name}  model={cfg.model}"
               f"  harness={'OFF' if args.no_harness else 'ON'}")
-        run = await run_config(tasks, label, cfg, mw_flags, args.timeout)
+        run = await run_config(tasks, label, cfg, mw_flags, args.timeout,
+                               run_id=run_id, traces_dir=traces_dir)
         all_runs.append(run)
         print_single(run, args.no_harness)
 
@@ -312,6 +344,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=180,
                    help="Per-task agent timeout in seconds (default: 180)")
     p.add_argument("--out", metavar="FILE", help="Save results to JSON")
+    p.add_argument("--trace", action="store_true",
+                   help="Save local traces to traces/ (no LangSmith needed)")
+    p.add_argument("--trace-dir", default="traces", metavar="DIR",
+                   help="Directory for trace files (default: traces/)")
     p.add_argument("--list", action="store_true", help="List task IDs and exit")
     return p
 

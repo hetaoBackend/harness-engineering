@@ -1,0 +1,46 @@
+# Harness Engineering — Provider Configuration
+#
+# Define as many named providers as you like.
+# Select one at runtime with:  uv run main.py "task" --provider <name>
+#
+# Fields per provider:
+#   type        = "anthropic" | "openai"   (required)
+#   model       = model identifier          (required)
+#   base_url    = API endpoint override     (optional, openai only)
+#   api_key_env = name of env var holding the key  (optional, defaults shown below)
+#
+# The api_key_env value is the *name* of an environment variable, not the key
+# itself — so this file is safe to commit.
+
+[providers.anthropic]
+type        = "anthropic"
+model       = "claude-sonnet-4-5-20250929"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[providers.openai]
+type        = "openai"
+model       = "gpt-4o"
+api_key_env = "OPENAI_API_KEY"
+
+[providers.deepseek]
+type        = "openai"
+model       = "deepseek-chat"
+base_url    = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+
+# [providers.together]
+# type        = "openai"
+# model       = "meta-llama/Llama-3-70b-chat-hf"
+# base_url    = "https://api.together.xyz/v1"
+# api_key_env = "TOGETHER_API_KEY"
+
+# [providers.ollama]
+# type     = "openai"
+# model    = "qwen2.5-coder:32b"
+# base_url = "http://localhost:11434/v1"
+# # no api_key_env needed for local servers
+
+# [providers.lmstudio]
+# type     = "openai"
+# model    = "local-model"
+# base_url = "http://localhost:1234/v1"

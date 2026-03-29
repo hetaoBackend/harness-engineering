@@ -1,31 +1,25 @@
 """Factory for the harness-engineered deep agent.
 
-Wires up all three middleware layers in the correct order:
+Wires up all four middleware layers in the correct order:
 
     LocalContext → LoopDetection → PreCompletionChecklist → ReasoningSandwich
 
-Ordering matters because deepagents composes middleware as a stack (first = outermost):
-- LocalContext runs first so its env context is in place for all later layers.
-- LoopDetection sits next to observe every tool call.
-- PreCompletionChecklist intercepts stopping responses before reasoning decisions.
-- ReasoningSandwich is innermost, closest to the model call (Anthropic only).
+Ordering matters because deepagents composes middleware as a stack (first = outermost).
 
 Provider selection
 ------------------
-Set ``provider="anthropic"`` (default) to use ChatAnthropic, or
-``provider="openai"`` to use ChatOpenAI with an OpenAI-compatible endpoint.
+Pass a ``ProviderConfig`` loaded from ``providers.toml``:
 
-For OpenAI-compatible endpoints (e.g. DeepSeek, Together AI, local Ollama):
+    from harness.config import get_provider
+    from harness.agent import create_harness_agent
 
-    create_harness_agent(
-        provider="openai",
-        model_name="deepseek-chat",
-        base_url="https://api.deepseek.com/v1",
-        api_key="sk-...",
-    )
+    cfg = get_provider("deepseek")
+    agent = create_harness_agent(provider_config=cfg)
 
-Or set the ``OPENAI_BASE_URL`` / ``OPENAI_API_KEY`` environment variables and
-omit those arguments.
+Or use the legacy keyword arguments directly:
+
+    agent = create_harness_agent(provider="openai", model_name="gpt-4o",
+                                 base_url="https://api.deepseek.com/v1")
 
 ReasoningSandwichMiddleware is automatically disabled for the ``"openai"``
 provider because it relies on Anthropic-specific extended thinking parameters.
@@ -60,10 +54,14 @@ reconsider your approach from scratch.
 
 
 def create_harness_agent(
-    model_name: str = "claude-sonnet-4-5-20250929",
+    provider_config=None,
+    *,
+    # Legacy / override kwargs
+    model_name: str | None = None,
     provider: Literal["anthropic", "openai"] = "anthropic",
     base_url: str | None = None,
     api_key: str | None = None,
+    # Common options
     cwd: str | None = None,
     loop_threshold: int = 3,
     enable_reasoning_sandwich: bool | None = None,
@@ -71,36 +69,42 @@ def create_harness_agent(
     """Create a deep agent with harness engineering middleware.
 
     Args:
-        model_name: Model identifier (e.g. "claude-sonnet-4-5-20250929" or
-            "gpt-4o" or any OpenAI-compatible model name).
-        provider: ``"anthropic"`` (default) or ``"openai"`` for any
-            OpenAI-compatible endpoint.
-        base_url: Override the API base URL (OpenAI provider only).
-            Falls back to the ``OPENAI_BASE_URL`` env var, then the default
-            OpenAI endpoint.
-        api_key: API key override.  Falls back to ``OPENAI_API_KEY`` or
-            ``ANTHROPIC_API_KEY`` depending on provider.
-        cwd: Working directory for the agent (defaults to current directory).
-        loop_threshold: Number of edits to the same file before doom-loop warning.
-        enable_reasoning_sandwich: Toggle adaptive thinking budget allocation.
-            Defaults to ``True`` for Anthropic, ``False`` for OpenAI (because
-            extended thinking is Anthropic-specific).
-
-    Returns:
-        Compiled LangGraph agent ready for ainvoke / astream.
+        provider_config: A ``ProviderConfig`` loaded from providers.toml.
+            When provided, ``provider``, ``base_url``, and ``api_key`` are
+            ignored (use ``model_name`` to override just the model).
+        model_name: Override the model in ``provider_config``, or set the
+            model when using legacy kwargs.
+        provider: Legacy — ``"anthropic"`` or ``"openai"``.
+        base_url: Legacy — API endpoint override (openai only).
+        api_key: Legacy — explicit API key.
+        cwd: Working directory shown to the agent (defaults to cwd).
+        loop_threshold: Edits before doom-loop warning fires.
+        enable_reasoning_sandwich: Defaults to ``True`` for Anthropic,
+            ``False`` for OpenAI.
     """
-    model = _build_model(provider, model_name, base_url, api_key)
+    if provider_config is not None:
+        _provider = provider_config.type
+        _model = model_name or provider_config.model
+        _base_url = provider_config.base_url
+        _api_key = provider_config.resolved_api_key
+    else:
+        _provider = provider
+        _model = model_name or (
+            "claude-sonnet-4-5-20250929" if provider == "anthropic" else "gpt-4o"
+        )
+        _base_url = base_url
+        _api_key = api_key
 
-    # Default: reasoning sandwich only makes sense for Anthropic
+    model = _build_model(_provider, _model, _base_url, _api_key)
+
     if enable_reasoning_sandwich is None:
-        enable_reasoning_sandwich = provider == "anthropic"
+        enable_reasoning_sandwich = _provider == "anthropic"
 
     middleware = [
         LocalContextMiddleware(cwd=cwd or os.getcwd()),
         LoopDetectionMiddleware(threshold=loop_threshold),
         PreCompletionChecklistMiddleware(),
     ]
-
     if enable_reasoning_sandwich:
         middleware.append(ReasoningSandwichMiddleware())
 
@@ -111,42 +115,23 @@ def create_harness_agent(
     )
 
 
-def _build_model(
-    provider: str,
-    model_name: str,
-    base_url: str | None,
-    api_key: str | None,
-):
-    """Instantiate the correct LangChain chat model for the given provider."""
+def _build_model(provider: str, model_name: str, base_url: str | None, api_key: str | None):
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
-
-        kwargs: dict = dict(
-            model_name=model_name,
-            max_tokens=16_000,
-            temperature=0,
-        )
+        kwargs: dict = dict(model_name=model_name, max_tokens=16_000, temperature=0)
         if api_key:
             kwargs["api_key"] = api_key
         return ChatAnthropic(**kwargs)
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI
-
         resolved_base_url = base_url or os.environ.get("OPENAI_BASE_URL")
         resolved_api_key = api_key or os.environ.get("OPENAI_API_KEY")
-
-        kwargs = dict(
-            model=model_name,
-            max_tokens=16_000,
-            temperature=0,
-        )
+        kwargs = dict(model=model_name, max_tokens=16_000, temperature=0)
         if resolved_base_url:
             kwargs["base_url"] = resolved_base_url
         if resolved_api_key:
             kwargs["api_key"] = resolved_api_key
         return ChatOpenAI(**kwargs)
 
-    raise ValueError(
-        f"Unknown provider {provider!r}. Choose 'anthropic' or 'openai'."
-    )
+    raise ValueError(f"Unknown provider {provider!r}. Use 'anthropic' or 'openai'.")

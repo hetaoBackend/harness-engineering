@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """Entry point for the harness-engineered deep agent.
 
+Providers are configured in providers.toml (project root) or
+~/.config/harness-engineering/providers.toml.
+
 Usage:
-    # Anthropic (default)
-    uv run main.py "Write a Python function that checks if a number is prime, with tests"
-    uv run main.py "Refactor auth.py to use JWT" --cwd /path/to/project
+    # Use the default provider (first entry in providers.toml)
+    uv run main.py "Write a prime-checker with tests"
 
-    # OpenAI
-    uv run main.py "Fix the bug in main.py" --provider openai --model gpt-4o
+    # Pick a specific provider by name
+    uv run main.py "Fix the bug" --provider deepseek
+    uv run main.py "Refactor auth.py" --provider anthropic
 
-    # OpenAI-compatible (DeepSeek, Together, Ollama, etc.)
-    uv run main.py "..." --provider openai --model deepseek-chat \\
-        --base-url https://api.deepseek.com/v1
+    # Override just the model for a run
+    uv run main.py "..." --provider openai --model gpt-4o-mini
 
-    Environment variables:
-        ANTHROPIC_API_KEY   Required when --provider anthropic (default)
-        OPENAI_API_KEY      Required when --provider openai
-        OPENAI_BASE_URL     Optional base URL override for openai provider
+    # Use a custom config file
+    uv run main.py "..." --config ~/my-providers.toml --provider local
+
+    # Point at a specific project directory
+    uv run main.py "Add docstrings" --cwd /path/to/myproject --provider deepseek
 """
 
 import argparse
@@ -31,32 +34,28 @@ from langchain_core.runnables import RunnableConfig
 async def run(
     task: str,
     cwd: str,
-    model: str,
-    provider: str,
-    base_url: str | None,
-    thread_id: str = "default",
+    provider_name: str,
+    config_path: str | None,
+    model_override: str | None,
+    thread_id: str,
 ) -> None:
-    # Import here so the module can be imported without side-effects
     from harness.agent import create_harness_agent
+    from harness.config import get_provider
 
-    agent = create_harness_agent(
-        model_name=model,
-        provider=provider,
-        base_url=base_url,
-        cwd=cwd,
-    )
+    cfg = get_provider(provider_name, config_path=config_path, model_override=model_override)
+    cfg.check_api_key()
 
-    config: RunnableConfig = {
-        "configurable": {"thread_id": thread_id},
-    }
+    agent = create_harness_agent(provider_config=cfg, cwd=cwd)
+
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
     print(f"\n{'='*60}")
     print(f"Task    : {task}")
     print(f"CWD     : {cwd}")
-    print(f"Provider: {provider}")
-    print(f"Model   : {model}")
-    if base_url:
-        print(f"Base URL: {base_url}")
+    print(f"Provider: {cfg.name}  ({cfg.type})")
+    print(f"Model   : {cfg.model}")
+    if cfg.base_url:
+        print(f"Base URL: {cfg.base_url}")
     print(f"{'='*60}\n")
 
     result = await agent.ainvoke(
@@ -64,7 +63,6 @@ async def run(
         config=config,
     )
 
-    # Print final AI response
     for msg in reversed(result.get("messages", [])):
         if isinstance(msg, AIMessage) and msg.content:
             print("\n--- Agent Response ---")
@@ -72,69 +70,75 @@ async def run(
             break
 
 
+def _default_provider(config_path: str | None) -> str:
+    """Return the first provider name in the config file."""
+    try:
+        from harness.config import load_providers
+        providers = load_providers(config_path)
+        return next(iter(providers))
+    except Exception:
+        return "anthropic"
+
+
 def main() -> None:
+    # Do a quick pre-parse for --config so we can use it to populate the
+    # --provider choices dynamically.
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", default=None)
+    pre_args, _ = pre.parse_known_args()
+
+    try:
+        from harness.config import load_providers
+        providers = load_providers(pre_args.config)
+        provider_names = sorted(providers)
+        provider_default = next(iter(providers))
+    except Exception:
+        provider_names = None   # no restriction — validated at runtime
+        provider_default = "anthropic"
+
     parser = argparse.ArgumentParser(
         description="Harness-engineered deep agent (TerminalBench-style)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument("task", help="Task for the agent to complete")
-    parser.add_argument("--cwd", default=os.getcwd(), help="Working directory (default: cwd)")
     parser.add_argument(
         "--provider",
-        default="anthropic",
-        choices=["anthropic", "openai"],
-        help="Model provider: 'anthropic' (default) or 'openai' for OpenAI-compatible APIs",
+        default=provider_default,
+        choices=provider_names,
+        metavar="NAME",
+        help=(
+            f"Provider name from providers.toml (default: {provider_default!r}). "
+            + (f"Available: {', '.join(provider_names)}" if provider_names else "")
+        ),
     )
     parser.add_argument(
         "--model",
         default=None,
-        help=(
-            "Model name. Defaults to 'claude-sonnet-4-5-20250929' for anthropic "
-            "or 'gpt-4o' for openai."
-        ),
+        help="Override the model defined in providers.toml for this run",
     )
     parser.add_argument(
-        "--base-url",
+        "--config",
         default=None,
-        dest="base_url",
-        help=(
-            "API base URL override (openai provider only). "
-            "E.g. https://api.deepseek.com/v1. "
-            "Falls back to OPENAI_BASE_URL env var."
-        ),
+        metavar="PATH",
+        help="Path to providers TOML config (default: ./providers.toml)",
+    )
+    parser.add_argument(
+        "--cwd",
+        default=os.getcwd(),
+        help="Working directory shown to the agent (default: current dir)",
     )
     parser.add_argument("--thread-id", default="harness-run", help="LangGraph thread ID")
+
     args = parser.parse_args()
-
-    # Resolve model default per provider
-    model = args.model
-    if model is None:
-        model = (
-            "claude-sonnet-4-5-20250929" if args.provider == "anthropic" else "gpt-4o"
-        )
-
-    # Validate API key presence
-    if args.provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: ANTHROPIC_API_KEY environment variable is not set.", file=sys.stderr)
-        sys.exit(1)
-
-    if args.provider == "openai":
-        # Allow key via env or OPENAI_BASE_URL override (some local servers don't need a key)
-        if not os.environ.get("OPENAI_API_KEY"):
-            print(
-                "WARNING: OPENAI_API_KEY is not set. "
-                "Set it if your endpoint requires authentication.",
-                file=sys.stderr,
-            )
 
     asyncio.run(
         run(
             task=args.task,
             cwd=args.cwd,
-            model=model,
-            provider=args.provider,
-            base_url=args.base_url,
+            provider_name=args.provider,
+            config_path=args.config,
+            model_override=args.model,
             thread_id=args.thread_id,
         )
     )

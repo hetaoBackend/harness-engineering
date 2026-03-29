@@ -14,110 +14,115 @@ uv sync          # installs langchain-anthropic, langchain-openai, deepagents, e
 
 ---
 
-## 2. Configure your model
+## 2. Configure providers
 
-### Option A — Anthropic (original paper setup)
+All providers live in **`providers.toml`** (project root).
+Each entry has a name you use at the CLI. Edit it to add/remove providers.
+
+```toml
+[providers.anthropic]
+type        = "anthropic"
+model       = "claude-sonnet-4-5-20250929"
+api_key_env = "ANTHROPIC_API_KEY"   # env var name — not the key itself
+
+[providers.deepseek]
+type        = "openai"
+model       = "deepseek-chat"
+base_url    = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[providers.ollama]
+type     = "openai"
+model    = "qwen2.5-coder:32b"
+base_url = "http://localhost:11434/v1"
+# no api_key_env for local servers
+```
+
+Then export the relevant key(s):
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
+export DEEPSEEK_API_KEY=sk-...
 ```
 
-Default model: `claude-sonnet-4-5-20250929`
+### Quick-reference: common endpoint URLs
 
-### Option B — OpenAI
-
-```bash
-export OPENAI_API_KEY=sk-...
-```
-
-Default model: `gpt-4o`
-
-### Option C — OpenAI-compatible endpoint (DeepSeek, Together AI, Ollama, etc.)
-
-```bash
-export OPENAI_API_KEY=sk-...
-export OPENAI_BASE_URL=https://api.deepseek.com/v1   # or your endpoint
-```
-
-| Provider | Base URL | Model example |
+| Provider | base_url | Model example |
 |---|---|---|
+| Anthropic | *(built-in)* | `claude-sonnet-4-5-20250929` |
+| OpenAI | *(built-in)* | `gpt-4o` |
 | DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
 | Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3-70b-chat-hf` |
 | Ollama (local) | `http://localhost:11434/v1` | `qwen2.5-coder:32b` |
-| LM Studio | `http://localhost:1234/v1` | whatever you loaded |
+| LM Studio | `http://localhost:1234/v1` | *(whatever you loaded)* |
 
 ---
 
 ## 3. Run the agent
 
-### Basic usage
-
 ```bash
-# Anthropic (default)
-uv run main.py "Write a Python function that checks if a number is prime, with tests"
+# Default provider (first entry in providers.toml)
+uv run main.py "Write a prime-checker with tests"
 
-# OpenAI
-uv run main.py "Fix the bug in main.py" --provider openai --model gpt-4o
+# Pick a named provider
+uv run main.py "Fix the bug in auth.py" --provider deepseek
+uv run main.py "Refactor to use async" --provider anthropic
 
-# DeepSeek via OpenAI-compatible API
-uv run main.py "Implement a binary search tree" \
-  --provider openai \
-  --model deepseek-chat \
-  --base-url https://api.deepseek.com/v1
+# Override the model for one run
+uv run main.py "..." --provider openai --model gpt-4o-mini
 
-# Point at a specific project directory
-uv run main.py "Add docstrings to all public functions" --cwd /path/to/myproject
+# Custom config file (e.g. a team-shared one)
+uv run main.py "..." --config ~/team-providers.toml --provider staging
+
+# Point at a different project
+uv run main.py "Add docstrings" --cwd /path/to/myproject --provider deepseek
 ```
 
 ### All CLI flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `task` | (required) | The task description |
-| `--provider` | `anthropic` | `anthropic` or `openai` |
-| `--model` | provider default | Model identifier |
-| `--base-url` | env `OPENAI_BASE_URL` | Override API endpoint (openai only) |
-| `--cwd` | current dir | Working directory shown to agent |
-| `--thread-id` | `harness-run` | LangGraph conversation thread ID |
+| `task` | *(required)* | Task description |
+| `--provider NAME` | first in config | Named provider from `providers.toml` |
+| `--model MODEL` | from config | Override model for this run only |
+| `--config PATH` | `./providers.toml` | Path to providers TOML file |
+| `--cwd PATH` | current dir | Working directory shown to agent |
+| `--thread-id ID` | `harness-run` | LangGraph conversation thread ID |
 
 ---
 
 ## 4. Middleware layers explained
 
-| Layer | What it does | Toggle |
+| Layer | What it does | Active |
 |---|---|---|
-| `LocalContextMiddleware` | Injects cwd + tool inventory (python, git, node …) into the system prompt before every model call | Always on |
-| `LoopDetectionMiddleware` | Counts edits per file; after `N` edits injects a doom-loop warning | `--loop-threshold` (default 3) |
-| `PreCompletionChecklistMiddleware` | Intercepts stop responses, forces one verification pass (run tests, check edge cases, re-read requirements) | Always on |
-| `ReasoningSandwichMiddleware` | Uses extended thinking on turn 1 (planning) and verification turn; standard thinking otherwise | Anthropic only; auto-disabled for OpenAI |
+| `LocalContextMiddleware` | Injects cwd + tool inventory (python, git, node…) into system prompt every call | Always |
+| `LoopDetectionMiddleware` | Counts edits per file; injects doom-loop warning after N edits | Always |
+| `PreCompletionChecklistMiddleware` | Intercepts stop responses; forces verification pass before exit | Always |
+| `ReasoningSandwichMiddleware` | Extended thinking on planning + verification turns; standard otherwise | Anthropic only |
 
-### Reasoning sandwich detail (Anthropic)
+### Reasoning sandwich (Anthropic)
 
 ```
-Turn 1  (planning)    → extended thinking (budget_tokens=10 000)
-Turns 2..N-1 (build)  → standard thinking (disabled)
-Final (verification)  → extended thinking (budget_tokens=10 000)
+Turn 1  (planning)    → extended thinking  budget_tokens=10 000
+Turns 2..N-1 (build)  → standard thinking  (disabled)
+Final   (verify)      → extended thinking  budget_tokens=10 000
 ```
 
-The blog post found that maximising thinking on every turn **hurts** score (53.9 %) due to timeouts, while the sandwich pattern reaches 66.5 %.
+The blog found that maximising thinking on every turn **hurts** (53.9 %) due to timeouts. The sandwich reaches 66.5 %.
+Auto-disabled for OpenAI-compatible providers.
 
 ---
 
 ## 5. Experiment matrix
 
-Use this table to track your own ablation runs.
-
-| Run | Provider | Model | Local­Context | Loop­Detect | Pre­Completion | Reasoning­Sandwich | Score / notes |
+| Run | Provider | Model | LocalCtx | LoopDet | PreComp | Sandwich | Score / notes |
 |-----|----------|-------|:---:|:---:|:---:|:---:|---|
 | baseline | anthropic | claude-sonnet-4-5 | ✓ | ✓ | ✓ | ✓ | |
 | no sandwich | anthropic | claude-sonnet-4-5 | ✓ | ✓ | ✓ | ✗ | |
 | no pre-completion | anthropic | claude-sonnet-4-5 | ✓ | ✓ | ✗ | ✓ | |
 | no local ctx | anthropic | claude-sonnet-4-5 | ✗ | ✓ | ✓ | ✓ | |
+| deepseek baseline | deepseek | deepseek-chat | ✓ | ✓ | ✓ | ✗ | |
 | openai baseline | openai | gpt-4o | ✓ | ✓ | ✓ | ✗ | |
-| deepseek | openai | deepseek-chat | ✓ | ✓ | ✓ | ✗ | |
-
-Tune `enable_reasoning_sandwich`, `loop_threshold`, and system prompt in
-`harness/agent.py` to run ablations programmatically.
 
 ---
 
@@ -125,23 +130,16 @@ Tune `enable_reasoning_sandwich`, `loop_threshold`, and system prompt in
 
 ```python
 import asyncio
+from harness.config import get_provider
 from harness.agent import create_harness_agent
 
-# Anthropic
-agent = create_harness_agent(
-    model_name="claude-sonnet-4-5-20250929",
-    provider="anthropic",
-)
+# Load from providers.toml
+cfg = get_provider("deepseek")
+agent = create_harness_agent(provider_config=cfg, loop_threshold=5)
 
-# OpenAI-compatible (DeepSeek)
-agent = create_harness_agent(
-    provider="openai",
-    model_name="deepseek-chat",
-    base_url="https://api.deepseek.com/v1",
-    api_key="sk-...",
-    loop_threshold=5,
-    enable_reasoning_sandwich=False,
-)
+# Override model for this run
+cfg = get_provider("deepseek", model_override="deepseek-reasoner")
+agent = create_harness_agent(provider_config=cfg)
 
 result = asyncio.run(
     agent.ainvoke(
@@ -164,8 +162,7 @@ All middleware lives in `harness/middleware/`. Each class inherits from
 | `wrap_model_call` / `awrap_model_call` | Around every LLM call |
 | `wrap_tool_call` / `awrap_tool_call` | Around every tool execution |
 
-Register new middleware by appending it to the `middleware` list in
-`create_harness_agent()`.
+Register new middleware by appending to the `middleware` list in `create_harness_agent()`.
 
 ---
 
@@ -173,9 +170,10 @@ Register new middleware by appending it to the `middleware` list in
 
 | Symptom | Fix |
 |---|---|
-| `ANTHROPIC_API_KEY not set` | `export ANTHROPIC_API_KEY=sk-ant-...` |
-| `openai.AuthenticationError` | `export OPENAI_API_KEY=...` |
-| Wrong endpoint hit | Pass `--base-url` or set `OPENAI_BASE_URL` |
-| Agent loops forever | Lower `--loop-threshold` or increase max turns in `create_deep_agent` |
-| `thinking` errors with non-Anthropic model | Use `--provider openai`; sandwich is auto-disabled |
-| Tool not found in agent | deepagents injects default shell tools; check `_detect_tools()` in `local_context.py` |
+| `Provider 'x' not found` | Check spelling; run `--help` to see available providers |
+| `requires ANTHROPIC_API_KEY to be set` | `export ANTHROPIC_API_KEY=sk-ant-...` |
+| `openai.AuthenticationError` | Set the `api_key_env` var for that provider |
+| Wrong endpoint used | Check `base_url` in `providers.toml` |
+| Agent loops forever | Lower `loop_threshold` in `create_harness_agent()` |
+| `thinking` errors with non-Anthropic model | Sandwich is auto-disabled; should not happen |
+| Tool not found | See `_detect_tools()` in `harness/middleware/local_context.py` |

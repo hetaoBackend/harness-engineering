@@ -44,6 +44,19 @@ models = [
     "o4-mini",
 ]
 
+# [providers.volcengine]
+# type          = "openai"
+# base_url      = "https://ark.cn-beijing.volces.com/api/v3"
+# api_key_env   = "ARK_API_KEY"
+# default_model = "doubao-1-5-pro-32k-250115"
+# models = [
+#     "doubao-1-5-pro-32k-250115",
+#     "doubao-1-5-pro-256k-250115",
+#     "doubao-1-5-lite-32k-250115",
+#     "doubao-1-5-thinking-pro-250415",   # reasoning model
+# ]
+# # Get your key at: https://console.volcengine.com/ark
+
 # [providers.together]
 # type          = "openai"
 # base_url      = "https://api.together.xyz/v1"

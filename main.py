@@ -30,8 +30,12 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
-from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
+
+_DIM = "\033[90m"
+_CYAN = "\033[36m"
+_YELLOW = "\033[33m"
+_RESET = "\033[0m"
 
 
 async def run(
@@ -61,16 +65,55 @@ async def run(
         print(f"Base URL: {cfg.base_url}")
     print(f"{'='*60}\n")
 
-    result = await agent.ainvoke(
+    async for event in agent.astream_events(
         {"messages": [{"role": "user", "content": task}]},
         config=config,
-    )
+        version="v2",
+    ):
+        kind = event["event"]
 
-    for msg in reversed(result.get("messages", [])):
-        if isinstance(msg, AIMessage) and msg.content:
-            print("\n--- Agent Response ---")
-            print(msg.content if isinstance(msg.content, str) else str(msg.content))
-            break
+        if kind == "on_chat_model_stream":
+            chunk = event["data"].get("chunk")
+            if chunk and hasattr(chunk, "content"):
+                content = chunk.content
+                if isinstance(content, str):
+                    print(content, end="", flush=True)
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            print(block["text"], end="", flush=True)
+
+        elif kind == "on_chat_model_end":
+            # Newline after each LLM turn
+            print()
+
+        elif kind == "on_tool_start":
+            tool_name = event.get("name", "tool")
+            inp = event["data"].get("input", {})
+            # Show a brief one-liner so the user knows what's happening
+            summary = _tool_summary(tool_name, inp)
+            print(f"\n{_CYAN}▶ {tool_name}{_RESET}  {_DIM}{summary}{_RESET}", flush=True)
+
+        elif kind == "on_tool_end":
+            tool_name = event.get("name", "tool")
+            output = event["data"].get("output", "")
+            preview = str(output)[:120].replace("\n", " ")
+            print(f"{_DIM}  ↳ {preview}{_RESET}", flush=True)
+
+
+def _tool_summary(tool_name: str, inp: dict) -> str:
+    """Return a short human-readable description of a tool call."""
+    if not isinstance(inp, dict):
+        return str(inp)[:80]
+    path = inp.get("path") or inp.get("file_path") or inp.get("filename") or ""
+    cmd  = inp.get("command") or inp.get("cmd") or ""
+    if path:
+        return path
+    if cmd:
+        return cmd[:80]
+    # fallback: first value
+    first = next(iter(inp.values()), "")
+    return str(first)[:80]
 
 
 def _default_provider(config_path: str | None) -> str:

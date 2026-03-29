@@ -6,15 +6,20 @@ Uses Python 3.11's built-in tomllib — no extra dependency needed.
 Config file format (providers.toml):
 
     [providers.deepseek]
-    type        = "openai"
-    model       = "deepseek-chat"
-    base_url    = "https://api.deepseek.com/v1"
-    api_key_env = "DEEPSEEK_API_KEY"
+    type          = "openai"
+    base_url      = "https://api.deepseek.com/v1"
+    api_key_env   = "DEEPSEEK_API_KEY"
+    default_model = "deepseek-chat"
+    models        = ["deepseek-chat", "deepseek-reasoner"]
 
     [providers.anthropic]
-    type        = "anthropic"
-    model       = "claude-sonnet-4-5-20250929"
-    api_key_env = "ANTHROPIC_API_KEY"
+    type          = "anthropic"
+    api_key_env   = "ANTHROPIC_API_KEY"
+    default_model = "claude-sonnet-4-5-20250929"
+    models        = ["claude-sonnet-4-5-20250929", "claude-opus-4-5-20251101"]
+
+Select a non-default model at runtime with --model:
+    uv run main.py "task" --provider deepseek --model deepseek-reasoner
 """
 
 from __future__ import annotations
@@ -27,8 +32,8 @@ from typing import Literal
 
 # Default config file search order (first match wins)
 _DEFAULT_SEARCH = [
-    Path("providers.toml"),                                       # project-local
-    Path.home() / ".config" / "harness-engineering" / "providers.toml",  # user-global
+    Path("providers.toml"),
+    Path.home() / ".config" / "harness-engineering" / "providers.toml",
 ]
 
 
@@ -36,19 +41,19 @@ _DEFAULT_SEARCH = [
 class ProviderConfig:
     name: str
     type: Literal["anthropic", "openai"]
-    model: str
+    default_model: str
+    models: list[str]          # available models for this provider
+    model: str                 # active model (default_model or --model override)
     base_url: str | None = None
-    api_key_env: str | None = None  # name of the env var, not the key itself
+    api_key_env: str | None = None
 
     @property
     def resolved_api_key(self) -> str | None:
-        """Read the actual key from the environment."""
         if not self.api_key_env:
             return None
         return os.environ.get(self.api_key_env)
 
     def check_api_key(self) -> None:
-        """Print a warning (openai) or raise (anthropic) when key is missing."""
         key = self.resolved_api_key
         if key:
             return
@@ -57,7 +62,6 @@ class ProviderConfig:
             raise EnvironmentError(
                 f"Provider '{self.name}' requires {env} to be set."
             )
-        # OpenAI-compatible servers (e.g. local Ollama) may not need a key
         print(
             f"WARNING: {env} is not set. "
             "Set it if your endpoint requires authentication.",
@@ -65,19 +69,7 @@ class ProviderConfig:
 
 
 def load_providers(config_path: str | Path | None = None) -> dict[str, ProviderConfig]:
-    """Load all providers from a TOML config file.
-
-    Args:
-        config_path: Explicit path to the config file.  When omitted the
-            default search list is tried in order.
-
-    Returns:
-        Mapping of provider name → ProviderConfig.
-
-    Raises:
-        FileNotFoundError: No config file could be located.
-        KeyError / ValueError: Malformed config entries.
-    """
+    """Load all providers from a TOML config file."""
     path = _resolve_path(config_path)
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
@@ -90,17 +82,27 @@ def load_providers(config_path: str | Path | None = None) -> dict[str, ProviderC
     for name, cfg in raw_providers.items():
         if "type" not in cfg:
             raise ValueError(f"Provider '{name}' is missing required field 'type'")
-        if "model" not in cfg:
-            raise ValueError(f"Provider '{name}' is missing required field 'model'")
         if cfg["type"] not in ("anthropic", "openai"):
             raise ValueError(
                 f"Provider '{name}' has unknown type {cfg['type']!r}. "
                 "Use 'anthropic' or 'openai'."
             )
+
+        # Support both old `model` field and new `default_model` field
+        default_model = cfg.get("default_model") or cfg.get("model")
+        if not default_model:
+            raise ValueError(f"Provider '{name}' is missing 'default_model'")
+
+        models: list[str] = cfg.get("models") or [default_model]
+        if default_model not in models:
+            models = [default_model] + models
+
         result[name] = ProviderConfig(
             name=name,
             type=cfg["type"],
-            model=cfg["model"],
+            default_model=default_model,
+            models=models,
+            model=default_model,
             base_url=cfg.get("base_url"),
             api_key_env=cfg.get("api_key_env"),
         )
@@ -112,12 +114,14 @@ def get_provider(
     config_path: str | Path | None = None,
     model_override: str | None = None,
 ) -> ProviderConfig:
-    """Load config and return the named provider.
+    """Load config and return the named provider, with optional model override.
 
     Args:
         name: Provider name as defined in the config file.
         config_path: Optional explicit path to the config file.
-        model_override: When set, replaces the model from the config.
+        model_override: Model name to use instead of default_model.
+            Can be any string — not restricted to the `models` list,
+            so you can try any model the endpoint supports.
 
     Raises:
         FileNotFoundError: Config file not found.
@@ -135,6 +139,8 @@ def get_provider(
         cfg = ProviderConfig(
             name=cfg.name,
             type=cfg.type,
+            default_model=cfg.default_model,
+            models=cfg.models,
             model=model_override,
             base_url=cfg.base_url,
             api_key_env=cfg.api_key_env,
@@ -154,5 +160,5 @@ def _resolve_path(config_path: str | Path | None) -> Path:
     raise FileNotFoundError(
         "No providers.toml found. Create one in the project root or at "
         "~/.config/harness-engineering/providers.toml. "
-        "See providers.toml in this repo for an example."
+        "See providers.example.toml for reference."
     )

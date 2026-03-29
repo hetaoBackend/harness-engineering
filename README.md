@@ -42,26 +42,29 @@ Keys are loaded automatically from `.env` at startup (via python-dotenv).
 
 ```toml
 [providers.anthropic]
-type        = "anthropic"
-model       = "claude-sonnet-4-5-20250929"
-api_key_env = "ANTHROPIC_API_KEY"
+type          = "anthropic"
+api_key_env   = "ANTHROPIC_API_KEY"
+default_model = "claude-sonnet-4-5-20250929"
+models        = ["claude-sonnet-4-5-20250929", "claude-opus-4-6", "claude-haiku-4-5-20251001"]
 
 [providers.deepseek]
-type        = "openai"
-model       = "deepseek-chat"
-base_url    = "https://api.deepseek.com/v1"
-api_key_env = "DEEPSEEK_API_KEY"
+type          = "openai"
+base_url      = "https://api.deepseek.com/v1"
+api_key_env   = "DEEPSEEK_API_KEY"
+default_model = "deepseek-chat"
+models        = ["deepseek-chat", "deepseek-reasoner"]
 
 [providers.openai]
-type        = "openai"
-model       = "gpt-4o"
-api_key_env = "OPENAI_API_KEY"
+type          = "openai"
+api_key_env   = "OPENAI_API_KEY"
+default_model = "gpt-4o"
+models        = ["gpt-4o", "gpt-4o-mini", "o3", "o4-mini"]
 
-# Local Ollama — no key needed
 # [providers.ollama]
-# type     = "openai"
-# model    = "qwen2.5-coder:32b"
-# base_url = "http://localhost:11434/v1"
+# type          = "openai"
+# base_url      = "http://localhost:11434/v1"
+# default_model = "qwen2.5-coder:32b"
+# models        = ["qwen2.5-coder:32b", "qwen2.5-coder:7b"]
 ```
 
 Put your keys in `.env` (copied from `.env.example`):
@@ -98,8 +101,9 @@ uv run main.py "Add docstrings to all public functions" \
   --provider anthropic \
   --cwd /path/to/myproject
 
-# Override the model for this run
+# Use a non-default model (must be listed under models in providers.toml)
 uv run main.py "Fix the bug" --provider deepseek --model deepseek-reasoner
+uv run main.py "Write tests" --provider anthropic --model claude-opus-4-6
 ```
 
 ### Run the benchmark

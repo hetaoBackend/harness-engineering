@@ -1,46 +1,59 @@
 # Harness Engineering — Provider Configuration
 #
-# Define as many named providers as you like.
-# Select one at runtime with:  uv run main.py "task" --provider <name>
+# Copy to providers.toml (git-ignored) and edit as needed.
 #
 # Fields per provider:
-#   type        = "anthropic" | "openai"   (required)
-#   model       = model identifier          (required)
-#   base_url    = API endpoint override     (optional, openai only)
-#   api_key_env = name of env var holding the key  (optional, defaults shown below)
+#   type          = "anthropic" | "openai"            (required)
+#   default_model = model used when --model is omitted (required)
+#   models        = list of available models           (optional, documents choices)
+#   base_url      = API endpoint override              (optional, openai only)
+#   api_key_env   = name of env var holding the key   (optional)
 #
-# The api_key_env value is the *name* of an environment variable, not the key
-# itself — so this file is safe to commit.
+# Select a model at runtime:
+#   uv run main.py "task" --provider deepseek
+#   uv run main.py "task" --provider deepseek --model deepseek-reasoner
 
 [providers.anthropic]
-type        = "anthropic"
-model       = "claude-sonnet-4-5-20250929"
-api_key_env = "ANTHROPIC_API_KEY"
-
-[providers.openai]
-type        = "openai"
-model       = "gpt-4o"
-api_key_env = "OPENAI_API_KEY"
+type          = "anthropic"
+api_key_env   = "ANTHROPIC_API_KEY"
+default_model = "claude-sonnet-4-5-20250929"
+models = [
+    "claude-sonnet-4-5-20250929",
+    "claude-opus-4-6",
+    "claude-haiku-4-5-20251001",
+]
 
 [providers.deepseek]
-type        = "openai"
-model       = "deepseek-chat"
-base_url    = "https://api.deepseek.com/v1"
-api_key_env = "DEEPSEEK_API_KEY"
+type          = "openai"
+base_url      = "https://api.deepseek.com/v1"
+api_key_env   = "DEEPSEEK_API_KEY"
+default_model = "deepseek-chat"
+models = [
+    "deepseek-chat",
+    "deepseek-reasoner",
+]
+
+[providers.openai]
+type          = "openai"
+api_key_env   = "OPENAI_API_KEY"
+default_model = "gpt-4o"
+models = [
+    "gpt-4o",
+    "gpt-4o-mini",
+    "o3",
+    "o4-mini",
+]
 
 # [providers.together]
-# type        = "openai"
-# model       = "meta-llama/Llama-3-70b-chat-hf"
-# base_url    = "https://api.together.xyz/v1"
-# api_key_env = "TOGETHER_API_KEY"
+# type          = "openai"
+# base_url      = "https://api.together.xyz/v1"
+# api_key_env   = "TOGETHER_API_KEY"
+# default_model = "meta-llama/Llama-3-70b-chat-hf"
+# models        = ["meta-llama/Llama-3-70b-chat-hf", "meta-llama/Llama-3-8b-chat-hf"]
 
 # [providers.ollama]
-# type     = "openai"
-# model    = "qwen2.5-coder:32b"
-# base_url = "http://localhost:11434/v1"
+# type          = "openai"
+# base_url      = "http://localhost:11434/v1"
+# default_model = "qwen2.5-coder:32b"
+# models        = ["qwen2.5-coder:32b", "qwen2.5-coder:7b"]
 # # no api_key_env needed for local servers
-
-# [providers.lmstudio]
-# type     = "openai"
-# model    = "local-model"
-# base_url = "http://localhost:1234/v1"

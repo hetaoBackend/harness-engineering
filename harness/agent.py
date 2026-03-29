@@ -21,6 +21,7 @@ import os
 from typing import Literal
 
 from deepagents import create_deep_agent
+from deepagents.backends import FilesystemBackend
 from langgraph.graph.state import CompiledStateGraph
 
 from harness.middleware import (
@@ -106,10 +107,13 @@ def create_harness_agent(
     if enable_reasoning_sandwich:
         middleware.append(ReasoningSandwichMiddleware())
 
+    backend = FilesystemBackend(root_dir=cwd or os.getcwd(), virtual_mode=False)
+
     return create_deep_agent(
         model=model,
         system_prompt=HARNESS_SYSTEM_PROMPT,
         middleware=middleware,
+        backend=backend,
     )
 
 

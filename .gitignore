@@ -5,5 +5,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+providers.toml
+!providers.example.toml
 dist/
 *.egg-info/

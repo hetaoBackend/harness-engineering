@@ -42,6 +42,9 @@ benchmark/compare.py    ← side-by-side diff of two or more result JSON files
 git clone https://github.com/hetaoBackend/harness-engineering
 cd harness-engineering
 uv sync
+
+cp .env.example .env                       # fill in your API keys
+cp providers.example.toml providers.toml   # edit providers as needed
 ```
 
 ---

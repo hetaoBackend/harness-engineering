@@ -28,8 +28,8 @@ git clone https://github.com/hetaoBackend/harness-engineering
 cd harness-engineering
 uv sync
 
-cp .env.example .env
-# edit .env and fill in your keys
+cp .env.example .env              # fill in your API keys
+cp providers.example.toml providers.toml   # edit providers as needed
 ```
 
 ---

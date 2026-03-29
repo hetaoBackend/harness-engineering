@@ -27,6 +27,9 @@ Built on the [deepagents](https://github.com/langchain-ai/deepagents) SDK.
 git clone https://github.com/hetaoBackend/harness-engineering
 cd harness-engineering
 uv sync
+
+cp .env.example .env
+# edit .env and fill in your keys
 ```
 
 ---
@@ -35,6 +38,7 @@ uv sync
 
 All providers are defined in **`providers.toml`**. The `api_key_env` field
 is the *name* of an environment variable — the key itself never goes in the file.
+Keys are loaded automatically from `.env` at startup (via python-dotenv).
 
 ```toml
 [providers.anthropic]
@@ -60,11 +64,11 @@ api_key_env = "OPENAI_API_KEY"
 # base_url = "http://localhost:11434/v1"
 ```
 
-Export the key for whichever provider you want to use:
+Put your keys in `.env` (copied from `.env.example`):
 
 ```bash
-export DEEPSEEK_API_KEY=sk-...
-export ANTHROPIC_API_KEY=sk-ant-...
+DEEPSEEK_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 Common endpoint URLs:

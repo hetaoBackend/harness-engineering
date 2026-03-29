@@ -34,6 +34,9 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
+from dotenv import load_dotenv
+load_dotenv(ROOT / ".env")
+
 from benchmark.tasks import ALL_TASKS, TASK_MAP, Task
 
 

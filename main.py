@@ -27,6 +27,9 @@ import asyncio
 import os
 import sys
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 

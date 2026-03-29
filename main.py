@@ -45,6 +45,7 @@ async def run(
     config_path: str | None,
     model_override: str | None,
     thread_id: str,
+    recursion_limit: int = 100,
 ) -> None:
     from harness.agent import create_harness_agent
     from harness.config import get_provider
@@ -54,7 +55,7 @@ async def run(
 
     agent = create_harness_agent(provider_config=cfg, cwd=cwd)
 
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    config: RunnableConfig = {"recursion_limit": recursion_limit, "configurable": {"thread_id": thread_id}}
 
     print(f"\n{'='*60}")
     print(f"Task    : {task}")
@@ -175,6 +176,12 @@ def main() -> None:
         help="Working directory shown to the agent (default: current dir)",
     )
     parser.add_argument("--thread-id", default="harness-run", help="LangGraph thread ID")
+    parser.add_argument(
+        "--recursion-limit",
+        type=int,
+        default=100,
+        help="LangGraph recursion limit (default: 100)",
+    )
 
     args = parser.parse_args()
 
@@ -186,6 +193,7 @@ def main() -> None:
             config_path=args.config,
             model_override=args.model,
             thread_id=args.thread_id,
+            recursion_limit=args.recursion_limit,
         )
     )
 
